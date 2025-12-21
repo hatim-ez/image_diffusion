@@ -1,0 +1,37 @@
+[project]
+name = "diffusion-image"
+version = "0.1.0"
+description = "Text-to-image diffusion training playground"
+authors = [
+  { name = "Unknown", email = "user@example.com" }
+]
+requires-python = ">=3.9"
+dependencies = [
+  "torch",
+  "torchvision",
+  "sentencepiece",
+  "webdataset",
+  "pyyaml",
+  "numpy<2",
+  "Pillow",
+  "tqdm",
+  "tensorboard",
+  "rich",
+  "einops",
+  "requests",
+  "diffusers",
+  "transformers",
+  "open-clip-torch",
+  "torchmetrics",
+  "pyarrow"
+]
+
+[project.optional-dependencies]
+dev = ["black", "ruff"]
+
+[tool.setuptools]
+packages = ["diffusion_image", "data", "models"]
+
+[build-system]
+requires = ["setuptools>=65.0"]
+build-backend = "setuptools.build_meta"

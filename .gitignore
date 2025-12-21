@@ -1,0 +1,12 @@
+__pycache__/
+.venv/
+.DS_Store
+*.pyc
+*.pyo
+*.pyd
+*.swp
+*.lock
+dist/
+build/
+logs/
+checkpoints/
