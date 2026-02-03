@@ -1,0 +1,6 @@
+# One metadata shard URL per line (blank lines and # comments are ignored).
+# Replace the placeholder URLs below with the LAION shards you want to download.
+# Example shards (uncomment and adjust as needed):
+# https://huggingface.co/datasets/laion/relaion400m/raw/main/part-00000-4227e361-38e7-40d5-8822-c6db46ea077c-c000.snappy.parquet
+# https://huggingface.co/datasets/laion/laion400m/resolve/main/data/part-00000001.parquet
+# must be authenticated if the dataset requires it. Export your Hugging Face token (export HF_TOKEN=...)

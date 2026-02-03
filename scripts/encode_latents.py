@@ -9,6 +9,7 @@ import argparse
 import io
 from pathlib import Path
 
+from diffusion_image import torch_compat  # noqa: F401
 import torch
 import webdataset as wds
 from diffusers import AutoencoderKL
@@ -40,28 +41,30 @@ def encode_dataset(shards: str, output_dir: Path, vae_name: str, image_size: int
         wds.WebDataset(shards)
         .decode("pil")
         .to_tuple("jpg;png;jpeg", "txt")
-        .map_tuple(transform, lambda x: x)
+        .map_tuple(transform, str)
     )
-    loader = wds.WebLoader(dataset, batch_size=batch_size, num_workers=2)
+    loader = wds.WebLoader(dataset, batch_size=batch_size, num_workers=0)
     output_dir.mkdir(parents=True, exist_ok=True)
     writer = wds.ShardWriter(str(output_dir / "%06d.tar"))
     idx = 0
-    with torch.no_grad():
-        for images, captions in tqdm(loader, desc="Encoding latents"):
-            images = images.to(device)
-            latents = vae.encode(images).latent_dist.sample()
-            latents = latents * vae.config.scaling_factor
-            for latent, caption in zip(latents, captions):
-                buffer = io.BytesIO()
-                torch.save(latent.cpu().half(), buffer)
-                sample = {
-                    "__key__": f"latent-{idx:09d}",
-                    "pt": buffer.getvalue(),
-                    "txt": caption,
-                }
-                writer.write(sample)
-                idx += 1
-    writer.close()
+    try:
+        with torch.no_grad():
+            for images, captions in tqdm(loader, desc="Encoding latents"):
+                images = images.to(device)
+                latents = vae.encode(images).latent_dist.sample()
+                latents = latents * vae.config.scaling_factor
+                for latent, caption in zip(latents, captions):
+                    buffer = io.BytesIO()
+                    torch.save(latent.cpu().half(), buffer)
+                    sample = {
+                        "__key__": f"latent-{idx:09d}",
+                        "pt": buffer.getvalue(),
+                        "txt": caption,
+                    }
+                    writer.write(sample)
+                    idx += 1
+    finally:
+        writer.close()
 
 
 def main() -> None:

@@ -20,6 +20,7 @@ import open_clip
 from torchvision.transforms import functional as TF
 from diffusers import AutoencoderKL
 
+from diffusion_image import torch_compat  # noqa: F401
 from diffusion_image.config import load_config
 from diffusion_image.logging_utils import ExperimentLogger
 from diffusion_image.ema import ExponentialMovingAverage

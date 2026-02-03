@@ -11,6 +11,7 @@ from pathlib import Path
 import torch
 from diffusers import AutoencoderKL
 
+from diffusion_image import torch_compat  # noqa: F401
 from diffusion_image.config import load_config
 from diffusion_image.diffusion import DiffusionProcess, ddim_sample
 from diffusion_image.vision import save_image_grid
