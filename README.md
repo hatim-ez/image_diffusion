@@ -86,6 +86,13 @@ python scripts/sample.py \
   python metrics/compute_fid.py --real data/fid_ref --fake samples
   ```
 
+## Validation
+Quick local checks:
+```bash
+PYTHONPYCACHEPREFIX=.pycache python3 -m compileall diffusion_image models data train scripts metrics
+git diff --check
+```
+
 ## Configuration Tips
 - `dataset.image_size` should match the tensor resolution produced by the loader (latent resolution when `latent_mode=true`).
 - `model.vae_model` must be provided when training/validating in latent mode so that evaluation can decode latents.
