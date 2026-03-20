@@ -50,7 +50,11 @@ def main() -> None:
     cfg = load_config(args.config)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     tokenizer = SentencePieceTokenizer(cfg.dataset.tokenizer_path, cfg.model.text_context_tokens)
-    model = build_model(cfg.model, latent_mode=cfg.dataset.latent_mode).to(device)
+    model = build_model(
+        cfg.model,
+        latent_mode=cfg.dataset.latent_mode,
+        vocab_size=tokenizer.vocab_size,
+    ).to(device)
     diffusion = DiffusionProcess(cfg.diffusion).to(device)
     vae = None
     if cfg.dataset.latent_mode and cfg.model.vae_model:

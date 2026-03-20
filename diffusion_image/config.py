@@ -49,6 +49,7 @@ class ModelConfig:
     use_fp16: bool = True
     gradient_checkpointing: bool = False
     clip_model: str = "openai/clip-vit-large-patch14"
+    text_encoder: Dict[str, Any] = field(default_factory=dict)
     unet: Dict[str, Any] = field(default_factory=dict)
     transformer: Dict[str, Any] = field(default_factory=dict)
     vae_model: Optional[str] = None
