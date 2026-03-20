@@ -6,6 +6,7 @@ Compute FID/KID between real and generated image folders.
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 
 import torch
@@ -15,9 +16,27 @@ from torchmetrics.image.fid import FrechetInceptionDistance
 from torchmetrics.image.kid import KernelInceptionDistance
 
 
+def _load_metadata_images(path: Path) -> list[Path]:
+    metadata_path = path / "metadata.jsonl"
+    if not metadata_path.exists():
+        return []
+    records = []
+    for line in metadata_path.read_text().splitlines():
+        if not line.strip():
+            continue
+        record = json.loads(line)
+        records.append(path / record["image"])
+    return records
+
+
 def load_folder(path: Path) -> list[Image.Image]:
     images = []
-    for file in sorted(path.glob("*.png")):
+    image_paths = _load_metadata_images(path)
+    if not image_paths:
+        image_paths = sorted(path.rglob("*.png"))
+    for file in image_paths:
+        if "grids" in file.parts:
+            continue
         try:
             images.append(Image.open(file).convert("RGB"))
         except Exception:
@@ -30,7 +49,7 @@ def load_folder(path: Path) -> list[Image.Image]:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Compute FID/KID")
     parser.add_argument("--real", type=Path, required=True, help="Directory of real/reference PNGs")
-    parser.add_argument("--fake", type=Path, required=True, help="Directory of generated PNGs")
+    parser.add_argument("--fake", type=Path, required=True, help="Directory of generated PNGs or sample output root")
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
     args = parser.parse_args()
 
