@@ -78,11 +78,16 @@ python scripts/sample.py \
   --guidance-scale 7.5
 ```
 
+Sampling writes:
+- `samples/images/`: one PNG per generated image for downstream metrics.
+- `samples/grids/`: batch grids for quick visual inspection.
+- `samples/metadata.jsonl`: prompt-to-image mapping used by offline scoring scripts.
+
 ## Metrics
 - Training automatically logs CLIP similarity between validation prompts and generated samples.
 - Additional offline metrics live in `metrics/` (FID/KID, CLIP score recompute). Example:
   ```bash
-  python metrics/compute_clip_score.py --images samples --prompts configs/validation_prompts.txt
+  python metrics/compute_clip_score.py --images samples
   python metrics/compute_fid.py --real data/fid_ref --fake samples
   ```
 
