@@ -38,4 +38,6 @@ def build_model(cfg: ModelConfig, latent_mode: bool = True) -> TextToImageModel:
             dropout=cfg.unet.get("dropout", 0.0),
         )
         head = DiffusionHead(in_channels=in_channels, out_channels=in_channels)
+    if cfg.gradient_checkpointing:
+        backbone.enable_gradient_checkpointing()
     return TextToImageModel(text_encoder=text_encoder, backbone=backbone, head=head)

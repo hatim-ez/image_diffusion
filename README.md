@@ -91,6 +91,9 @@ python scripts/sample.py \
 - `model.vae_model` must be provided when training/validating in latent mode so that evaluation can decode latents.
 - Adjust `scheduler.total_steps` to align with `training.max_steps` for correct cosine annealing length.
 - Use `training.eval_batch_size` and `validation_prompts` to tailor evaluation load to hardware limits.
+- `training.mixed_precision` now controls AMP explicitly: use `fp16`, `bf16`, or `none`.
+- `diffusion.sampler` selects the evaluation and sampling path (`ddim` or `ddpm`), while `scheduler.name` selects the LR schedule (`cosine` or `linear`).
+- `model.gradient_checkpointing=true` enables checkpointing inside the UNet/transformer backbone blocks.
 
 ## Next Steps
 - Extend `models/transformer.py` with DiT-style classifier-free guidance conditioning blocks.

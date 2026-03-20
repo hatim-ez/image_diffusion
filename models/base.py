@@ -12,6 +12,9 @@ class Backbone(nn.Module):
     Abstract base class for diffusion backbones.
     """
 
+    def enable_gradient_checkpointing(self) -> None:
+        return None
+
     def forward(self, x: torch.Tensor, timesteps: torch.Tensor, conditioning: Dict[str, torch.Tensor]) -> torch.Tensor:
         raise NotImplementedError
 
