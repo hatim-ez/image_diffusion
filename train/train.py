@@ -13,6 +13,7 @@ from typing import Dict, List
 import torch
 import torch.nn.functional as F
 from torch.cuda.amp import GradScaler, autocast
+from torch.nn.parallel import DistributedDataParallel
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import LambdaLR
 from tqdm import tqdm
@@ -25,7 +26,7 @@ from diffusion_image.config import load_config
 from diffusion_image.logging_utils import ExperimentLogger
 from diffusion_image.ema import ExponentialMovingAverage
 from diffusion_image.checkpointing import load_checkpoint, save_checkpoint
-from diffusion_image.distributed import init_distributed, is_main_process
+from diffusion_image.distributed import barrier, init_distributed, is_main_process
 from diffusion_image.diffusion import DiffusionProcess, ddim_sample
 from diffusion_image.vision import save_image_grid
 from data import SentencePieceTokenizer, create_webdataset_dataloader
@@ -140,8 +141,12 @@ def train(config_path: Path) -> None:
     ctx = init_distributed(cfg.training.seed)
     device = ctx.device
     tokenizer = SentencePieceTokenizer(cfg.dataset.tokenizer_path, max_length=cfg.model.text_context_tokens)
-    dataloader = create_webdataset_dataloader(cfg.dataset, tokenizer)
+    dataloader = create_webdataset_dataloader(cfg.dataset, tokenizer, distributed=ctx.distributed)
     model = build_model(cfg.model, latent_mode=cfg.dataset.latent_mode).to(device)
+    train_model = model
+    if ctx.distributed:
+        ddp_kwargs = {"device_ids": [ctx.local_rank]} if device.type == "cuda" else {}
+        train_model = DistributedDataParallel(model, **ddp_kwargs)
     diffusion = DiffusionProcess(cfg.diffusion).to(device)
     vae = None
     if cfg.dataset.latent_mode and cfg.model.vae_model:
@@ -188,7 +193,7 @@ def train(config_path: Path) -> None:
         timesteps = diffusion.sample_timesteps(images.size(0), device)
         noisy = diffusion.q_sample(images, timesteps, noise)
         with autocast(enabled=cfg.model.use_fp16 and device.type == "cuda"):
-            preds = model(noisy, timesteps, tokens, mask)
+            preds = train_model(noisy, timesteps, tokens, mask)
             loss = F.mse_loss(preds, noise)
         scaler.scale(loss).backward()
         scaler.unscale_(optimizer)
@@ -203,37 +208,43 @@ def train(config_path: Path) -> None:
             logger.log_metrics({"loss": loss.item(), "lr": optimizer.param_groups[0]["lr"]}, step)
         progress.update(1)
 
-        if logger and step % cfg.training.eval_interval == 0 and is_main_process():
-            eval_metrics = evaluate(
-                model=model,
-                diffusion=diffusion,
-                tokenizer=tokenizer,
-                prompts_file=Path(cfg.training.validation_prompts),
-                device=device,
-                dataset_cfg=cfg.dataset,
-                model_cfg=cfg.model,
-                training_cfg=cfg.training,
-                diffusion_cfg=cfg.diffusion,
-                step=step,
-                output_dir=Path(cfg.training.log_dir),
-                ema=ema,
-                vae=vae,
-            )
-            if eval_metrics:
-                logger.log_metrics(eval_metrics, step)
+        if step % cfg.training.eval_interval == 0:
+            barrier()
+            if logger and is_main_process():
+                eval_metrics = evaluate(
+                    model=model,
+                    diffusion=diffusion,
+                    tokenizer=tokenizer,
+                    prompts_file=Path(cfg.training.validation_prompts),
+                    device=device,
+                    dataset_cfg=cfg.dataset,
+                    model_cfg=cfg.model,
+                    training_cfg=cfg.training,
+                    diffusion_cfg=cfg.diffusion,
+                    step=step,
+                    output_dir=Path(cfg.training.log_dir),
+                    ema=ema,
+                    vae=vae,
+                )
+                if eval_metrics:
+                    logger.log_metrics(eval_metrics, step)
+            barrier()
 
-        if step % cfg.training.checkpoint_interval == 0 and is_main_process():
-            ckpt_path = Path(cfg.training.output_dir) / f"step_{step:07d}.pt"
-            save_checkpoint(
-                ckpt_path,
-                step,
-                model,
-                optimizer,
-                scheduler,
-                ema.state_dict(),
-                tokenizer_hash=tokenizer.hash(),
-                config=cfg.raw,
-            )
+        if step % cfg.training.checkpoint_interval == 0:
+            barrier()
+            if is_main_process():
+                ckpt_path = Path(cfg.training.output_dir) / f"step_{step:07d}.pt"
+                save_checkpoint(
+                    ckpt_path,
+                    step,
+                    model,
+                    optimizer,
+                    scheduler,
+                    ema.state_dict(),
+                    tokenizer_hash=tokenizer.hash(),
+                    config=cfg.raw,
+                )
+            barrier()
 
     if logger:
         logger.close()

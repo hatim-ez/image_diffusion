@@ -19,6 +19,7 @@ class DistributedContext:
     world_size: int = 1
     local_rank: int = 0
     device: torch.device = torch.device("cpu")
+    distributed: bool = False
 
 
 def init_distributed(seed: int = 42) -> DistributedContext:
@@ -34,6 +35,8 @@ def init_distributed(seed: int = 42) -> DistributedContext:
             torch.distributed.init_process_group(backend="nccl")
     else:
         device = torch.device("cpu")
+        if distributed and not torch.distributed.is_initialized():
+            torch.distributed.init_process_group(backend="gloo")
 
     seed_all(seed + rank)
 
@@ -42,6 +45,7 @@ def init_distributed(seed: int = 42) -> DistributedContext:
         world_size=world_size,
         local_rank=local_rank,
         device=device,
+        distributed=distributed,
     )
 
 
