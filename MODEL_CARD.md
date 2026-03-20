@@ -31,7 +31,7 @@
 
 ## Limitations
 - Single-node mixed precision setup; no out-of-the-box multi-GPU scaling.
-- Text encoder defaults to frozen CLIP; prompt understanding may lag SOTA.
+- Text encoder is a lightweight transformer trained from scratch on SentencePiece captions; prompt understanding may lag SOTA.
 - Latent VAE is borrowed from Stable Diffusion; quality tied to upstream weights.
 
 ## Deployment Guidance

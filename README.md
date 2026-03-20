@@ -4,6 +4,7 @@ Minimal-yet-opinionated text-to-image diffusion training stack geared toward exp
 
 ## Features
 - WebDataset streaming pipeline with tokenizer training utilities and NSFW filtering scripts.
+- SentencePiece-conditioned transformer text encoder aligned with the training tokenizer.
 - Config-driven experiments (YAML) selecting UNet or DiT-style transformer backbones.
 - Mixed precision training with EMA tracking, TensorBoard + JSONL logging.
 - Scheduler utilities (linear/cosine), DDPM/DDIM samplers, classifier-free guidance.
