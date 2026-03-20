@@ -8,6 +8,7 @@ Minimal-yet-opinionated text-to-image diffusion training stack geared toward exp
 - Mixed precision training with EMA tracking, TensorBoard + JSONL logging.
 - Scheduler utilities (linear/cosine), DDPM/DDIM samplers, classifier-free guidance.
 - Offline latent encoding pipeline using Stable Diffusion's VAE for lightweight training.
+- Single-node multi-GPU training support via DDP with node-aware WebDataset shard splitting.
 
 ## Getting Started
 
@@ -95,7 +96,6 @@ python scripts/sample.py \
 ## Next Steps
 - Extend `models/transformer.py` with DiT-style classifier-free guidance conditioning blocks.
 - Add gradient checkpointing toggles inside backbones to support larger models.
-- Plug in distributed training (DDP) once single-node stability is verified.
 - Integrate additional schedulers (EDM, flow matching) or improved samplers (Heun, PLMS).
 
 See `MODEL_CARD.md` for dataset disclosures, ethical considerations, and deployment notes.

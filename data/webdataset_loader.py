@@ -34,7 +34,11 @@ def _null_tokens(tokenizer: SentencePieceTokenizer) -> torch.Tensor:
     return torch.tensor(tokens, dtype=torch.long)
 
 
-def create_webdataset(cfg: DatasetConfig, tokenizer: SentencePieceTokenizer) -> wds.WebDataset:
+def create_webdataset(
+    cfg: DatasetConfig,
+    tokenizer: SentencePieceTokenizer,
+    distributed: bool = False,
+) -> wds.WebDataset:
     handler = wds.handlers.warn_and_continue
     transform = build_image_transform(cfg.image_size)
 
@@ -75,7 +79,13 @@ def create_webdataset(cfg: DatasetConfig, tokenizer: SentencePieceTokenizer) -> 
             "raw_caption": caption,
         }
 
-    dataset = wds.WebDataset(url=cfg.shards_path, handler=handler, resampled=True).shuffle(cfg.shuffle_buffer)
+    nodesplitter = wds.split_by_node if distributed else wds.shardlists.single_node_only
+    dataset = wds.WebDataset(
+        url=cfg.shards_path,
+        handler=handler,
+        resampled=True,
+        nodesplitter=nodesplitter,
+    ).shuffle(cfg.shuffle_buffer)
     if cfg.latent_mode:
         dataset = dataset.to_tuple("pt", "txt").map(preprocess_latents, handler=handler)
     else:
@@ -93,8 +103,9 @@ def collate_fn(batch: Iterable[Dict[str, torch.Tensor]]) -> Dict[str, torch.Tens
 def create_webdataset_dataloader(
     cfg: DatasetConfig,
     tokenizer: SentencePieceTokenizer,
+    distributed: bool = False,
 ) -> DataLoader:
-    dataset = create_webdataset(cfg, tokenizer)
+    dataset = create_webdataset(cfg, tokenizer, distributed=distributed)
     return DataLoader(
         dataset,
         batch_size=cfg.batch_size,
