@@ -13,7 +13,7 @@ from diffusers import AutoencoderKL
 
 from diffusion_image import torch_compat  # noqa: F401
 from diffusion_image.config import load_config
-from diffusion_image.diffusion import DiffusionProcess, ddim_sample
+from diffusion_image.diffusion import DiffusionProcess, ddim_sample, ddpm_sample
 from diffusion_image.vision import save_image_grid
 from data import SentencePieceTokenizer
 from models.builder import build_model
@@ -33,6 +33,45 @@ def load_prompts(path: Path | None, prompt: str | None) -> list[str]:
 def make_tokens(tokenizer: SentencePieceTokenizer, prompts: list[str], device: torch.device) -> torch.Tensor:
     tokens = [torch.tensor(tokenizer.encode(p), dtype=torch.long) for p in prompts]
     return torch.stack(tokens).to(device)
+
+
+def sample_latents(
+    model: torch.nn.Module,
+    diffusion: DiffusionProcess,
+    cfg,
+    x_shape: tuple[int, int, int, int],
+    tokens: torch.Tensor,
+    mask: torch.Tensor,
+    guidance_scale: float,
+    uncond_tokens: torch.Tensor,
+    uncond_mask: torch.Tensor,
+    num_steps: int,
+) -> torch.Tensor:
+    sampler = cfg.diffusion.sampler.lower()
+    if sampler == "ddim":
+        return ddim_sample(
+            model,
+            diffusion,
+            x_shape,
+            tokens,
+            mask,
+            num_steps=num_steps,
+            guidance_scale=guidance_scale,
+            uncond_tokens=uncond_tokens,
+            uncond_mask=uncond_mask,
+        )
+    if sampler == "ddpm":
+        return ddpm_sample(
+            model,
+            diffusion,
+            x_shape,
+            tokens,
+            mask,
+            guidance_scale=guidance_scale,
+            uncond_tokens=uncond_tokens,
+            uncond_mask=uncond_mask,
+        )
+    raise ValueError(f"Unsupported sampler: {cfg.diffusion.sampler}")
 
 
 def main() -> None:
@@ -71,9 +110,10 @@ def main() -> None:
         uncond[:, 0] = tokenizer.null_prompt_id
         uncond_mask = (uncond != tokenizer.pad_id).long()
         with torch.no_grad():
-            samples = ddim_sample(
+            samples = sample_latents(
                 model,
                 diffusion,
+                cfg,
                 (
                     tokens.size(0),
                     cfg.model.latent_dim if cfg.dataset.latent_mode else 3,
@@ -82,10 +122,10 @@ def main() -> None:
                 ),
                 tokens,
                 mask,
-                num_steps=args.num_steps,
-                guidance_scale=args.guidance_scale,
-                uncond_tokens=uncond,
-                uncond_mask=uncond_mask,
+                args.guidance_scale,
+                uncond,
+                uncond_mask,
+                args.num_steps,
             )
             if cfg.dataset.latent_mode and vae is not None:
                 samples = vae.decode(samples / vae.config.scaling_factor).sample

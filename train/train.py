@@ -6,14 +6,14 @@ Training script for text-to-image diffusion.
 from __future__ import annotations
 
 import argparse
-import itertools
+import math
 from pathlib import Path
 from typing import Dict, List
 
 import torch
 import torch.nn.functional as F
-from torch.cuda.amp import GradScaler, autocast
-from torch.optim import AdamW
+from torch.cuda.amp import GradScaler
+from torch.optim import Adam, AdamW
 from torch.optim.lr_scheduler import LambdaLR
 from tqdm import tqdm
 import open_clip
@@ -26,27 +26,93 @@ from diffusion_image.logging_utils import ExperimentLogger
 from diffusion_image.ema import ExponentialMovingAverage
 from diffusion_image.checkpointing import load_checkpoint, save_checkpoint
 from diffusion_image.distributed import init_distributed, is_main_process
-from diffusion_image.diffusion import DiffusionProcess, ddim_sample
+from diffusion_image.diffusion import DiffusionProcess, ddim_sample, ddpm_sample
 from diffusion_image.vision import save_image_grid
 from data import SentencePieceTokenizer, create_webdataset_dataloader
 from models.builder import build_model
 
 
-def create_optimizer(model: torch.nn.Module, cfg) -> AdamW:
+def create_optimizer(model: torch.nn.Module, cfg) -> torch.optim.Optimizer:
     params = [p for p in model.parameters() if p.requires_grad]
-    return AdamW(params, lr=cfg.lr, betas=cfg.betas, eps=cfg.eps, weight_decay=cfg.weight_decay)
+    name = cfg.name.lower()
+    if name == "adamw":
+        return AdamW(params, lr=cfg.lr, betas=cfg.betas, eps=cfg.eps, weight_decay=cfg.weight_decay)
+    if name == "adam":
+        return Adam(params, lr=cfg.lr, betas=cfg.betas, eps=cfg.eps, weight_decay=cfg.weight_decay)
+    raise ValueError(f"Unsupported optimizer: {cfg.name}")
 
 
-def create_scheduler(optimizer: AdamW, cfg) -> LambdaLR:
+def create_scheduler(optimizer: torch.optim.Optimizer, cfg) -> LambdaLR:
     warmup_steps = int(cfg.warmup_ratio * cfg.total_steps)
 
     def lr_lambda(step: int) -> float:
         if step < warmup_steps:
             return max(step / max(1, warmup_steps), 1e-3)
         progress = (step - warmup_steps) / max(1, cfg.total_steps - warmup_steps)
-        return 0.5 * (1 + torch.cos(torch.tensor(progress * 3.1415926535))).item()
+        if cfg.name.lower() == "cosine":
+            return 0.5 * (1 + math.cos(progress * math.pi))
+        if cfg.name.lower() == "linear":
+            return max(0.0, 1.0 - progress)
+        raise ValueError(f"Unsupported scheduler: {cfg.name}")
 
     return LambdaLR(optimizer, lr_lambda)
+
+
+def autocast_dtype(cfg, device: torch.device) -> torch.dtype | None:
+    if device.type != "cuda":
+        return None
+    precision = cfg.training.mixed_precision.lower()
+    if precision == "fp16":
+        return torch.float16
+    if precision == "bf16":
+        return torch.bfloat16
+    if precision in {"none", "no", "off"}:
+        return None
+    raise ValueError(f"Unsupported mixed precision mode: {cfg.training.mixed_precision}")
+
+
+def autocast_context(device: torch.device, amp_dtype: torch.dtype | None):
+    if amp_dtype is None:
+        return torch.autocast(device_type=device.type, enabled=False)
+    return torch.autocast(device_type=device.type, dtype=amp_dtype, enabled=True)
+
+
+def sample_validation_images(
+    model: torch.nn.Module,
+    diffusion: DiffusionProcess,
+    diffusion_cfg,
+    x_shape: tuple[int, int, int, int],
+    tokens: torch.Tensor,
+    mask: torch.Tensor,
+    guidance_scale: float,
+    uncond_tokens: torch.Tensor,
+    uncond_mask: torch.Tensor,
+) -> torch.Tensor:
+    sampler = diffusion_cfg.sampler.lower()
+    if sampler == "ddim":
+        return ddim_sample(
+            model,
+            diffusion,
+            x_shape,
+            tokens,
+            mask,
+            num_steps=diffusion_cfg.ddim_steps,
+            guidance_scale=guidance_scale,
+            uncond_tokens=uncond_tokens,
+            uncond_mask=uncond_mask,
+        )
+    if sampler == "ddpm":
+        return ddpm_sample(
+            model,
+            diffusion,
+            x_shape,
+            tokens,
+            mask,
+            guidance_scale=guidance_scale,
+            uncond_tokens=uncond_tokens,
+            uncond_mask=uncond_mask,
+        )
+    raise ValueError(f"Unsupported sampler: {diffusion_cfg.sampler}")
 
 
 def prepare_batch(batch: Dict[str, torch.Tensor], device: torch.device) -> Dict[str, torch.Tensor]:
@@ -107,9 +173,10 @@ def evaluate(
     uncond_mask = (uncond_tokens != tokenizer.pad_id).long()
 
     with ema.apply_to(model):
-        samples = ddim_sample(
+        samples = sample_validation_images(
             model,
             diffusion,
+            diffusion_cfg,
             (
                 tokens.size(0),
                 model_cfg.latent_dim if dataset_cfg.latent_mode else 3,
@@ -118,10 +185,9 @@ def evaluate(
             ),
             tokens,
             mask,
-            num_steps=diffusion_cfg.ddim_steps,
-            guidance_scale=training_cfg.guidance_scale,
-            uncond_tokens=uncond_tokens,
-            uncond_mask=uncond_mask,
+            training_cfg.guidance_scale,
+            uncond_tokens,
+            uncond_mask,
         )
     if dataset_cfg.latent_mode:
         if vae is None:
@@ -153,7 +219,8 @@ def train(config_path: Path) -> None:
     optimizer = create_optimizer(model, cfg.optimizer)
     scheduler = create_scheduler(optimizer, cfg.scheduler)
     ema = ExponentialMovingAverage(model, decay=cfg.training.ema_decay)
-    scaler = GradScaler(enabled=cfg.model.use_fp16 and device.type == "cuda")
+    amp_dtype = autocast_dtype(cfg, device)
+    scaler = GradScaler(enabled=amp_dtype == torch.float16)
     logger = None
     if is_main_process():
         log_dir = Path(cfg.training.log_dir)
@@ -187,7 +254,7 @@ def train(config_path: Path) -> None:
         noise = torch.randn_like(images)
         timesteps = diffusion.sample_timesteps(images.size(0), device)
         noisy = diffusion.q_sample(images, timesteps, noise)
-        with autocast(enabled=cfg.model.use_fp16 and device.type == "cuda"):
+        with autocast_context(device, amp_dtype):
             preds = model(noisy, timesteps, tokens, mask)
             loss = F.mse_loss(preds, noise)
         scaler.scale(loss).backward()

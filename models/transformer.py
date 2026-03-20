@@ -6,6 +6,7 @@ from typing import Dict
 import torch
 import torch.nn as nn
 from einops import rearrange
+from torch.utils.checkpoint import checkpoint
 
 from .base import Backbone
 
@@ -73,6 +74,7 @@ class TransformerBackbone(Backbone):
         image_size: int = 32,
     ) -> None:
         super().__init__()
+        self.gradient_checkpointing = False
         self.patch_embed = PatchEmbed(in_channels, embed_dim, patch_size)
         num_patches = (image_size // patch_size) ** 2
         self.pos_embed = nn.Parameter(torch.zeros(1, num_patches, embed_dim))
@@ -87,6 +89,22 @@ class TransformerBackbone(Backbone):
         self.patch_size = patch_size
         self.image_size = image_size
 
+    def enable_gradient_checkpointing(self) -> None:
+        self.gradient_checkpointing = True
+
+    def _run_block(
+        self,
+        block: DiTBlock,
+        patches: torch.Tensor,
+        context: torch.Tensor,
+        mask: torch.Tensor | None,
+    ) -> torch.Tensor:
+        if not self.gradient_checkpointing or not self.training:
+            return block(patches, context, mask)
+        if mask is None:
+            return checkpoint(lambda p, c: block(p, c, None), patches, context, use_reentrant=False)
+        return checkpoint(block, patches, context, mask, use_reentrant=False)
+
     def forward(self, x: torch.Tensor, timesteps: torch.Tensor, conditioning: Dict[str, torch.Tensor]) -> torch.Tensor:
         b, _, h, w = x.shape
         patches = self.patch_embed(x)
@@ -96,7 +114,7 @@ class TransformerBackbone(Backbone):
         context = conditioning.get("text")
         mask = conditioning.get("mask")
         for block in self.blocks:
-            patches = block(patches, context, mask)
+            patches = self._run_block(block, patches, context, mask)
         patches = self.norm(patches)
         pixels = self.proj(patches)
         pixels = rearrange(pixels, "b (h w) (p1 p2 c) -> b c (h p1) (w p2)", p1=self.patch_size, p2=self.patch_size, h=h // self.patch_size, w=w // self.patch_size, c=x.shape[1])

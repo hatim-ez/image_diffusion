@@ -7,6 +7,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from einops import rearrange
+from torch.utils.checkpoint import checkpoint
 
 from .base import Backbone
 
@@ -124,6 +125,7 @@ class UNetBackbone(Backbone):
         dropout: float = 0.0,
     ) -> None:
         super().__init__()
+        self.gradient_checkpointing = False
         self.in_conv = nn.Conv2d(in_channels, model_channels, kernel_size=3, padding=1)
         time_dim = model_channels * 4
         self.time_embed = nn.Sequential(
@@ -165,6 +167,27 @@ class UNetBackbone(Backbone):
         self.out_norm = nn.GroupNorm(32, channels)
         self.out_conv = nn.Conv2d(channels, in_channels, kernel_size=3, padding=1)
 
+    def enable_gradient_checkpointing(self) -> None:
+        self.gradient_checkpointing = True
+
+    def _run_residual(self, module: ResidualBlock, x: torch.Tensor, time_emb: torch.Tensor) -> torch.Tensor:
+        if not self.gradient_checkpointing or not self.training:
+            return module(x, time_emb)
+        return checkpoint(module, x, time_emb, use_reentrant=False)
+
+    def _run_attention(
+        self,
+        module: AttentionBlock,
+        x: torch.Tensor,
+        context: torch.Tensor,
+        mask: torch.Tensor | None,
+    ) -> torch.Tensor:
+        if not self.gradient_checkpointing or not self.training:
+            return module(x, context, mask)
+        if mask is None:
+            return checkpoint(lambda hidden, cond: module(hidden, cond, None), x, context, use_reentrant=False)
+        return checkpoint(module, x, context, mask, use_reentrant=False)
+
     def forward(self, x: torch.Tensor, timesteps: torch.Tensor, conditioning: Dict[str, torch.Tensor]) -> torch.Tensor:
         text_context = conditioning.get("text")
         mask = conditioning.get("mask")
@@ -174,25 +197,25 @@ class UNetBackbone(Backbone):
         idx = 0
         for module in self.downs:
             if isinstance(module, ResidualBlock):
-                h = module(h, t_emb)
+                h = self._run_residual(module, h, t_emb)
             elif isinstance(module, AttentionBlock):
-                h = module(h, text_context, mask)
+                h = self._run_attention(module, h, text_context, mask)
             else:
                 h = module(h)
             residuals.append(h)
             idx += 1
 
-        h = self.mid_block1(h, t_emb)
-        h = self.mid_attn(h, text_context, mask)
-        h = self.mid_block2(h, t_emb)
+        h = self._run_residual(self.mid_block1, h, t_emb)
+        h = self._run_attention(self.mid_attn, h, text_context, mask)
+        h = self._run_residual(self.mid_block2, h, t_emb)
 
         for module in self.ups:
             if isinstance(module, ResidualBlock):
                 skip = residuals.pop()
                 h = torch.cat([h, skip], dim=1)
-                h = module(h, t_emb)
+                h = self._run_residual(module, h, t_emb)
             elif isinstance(module, AttentionBlock):
-                h = module(h, text_context, mask)
+                h = self._run_attention(module, h, text_context, mask)
             else:
                 h = module(h)
 
