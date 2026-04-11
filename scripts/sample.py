@@ -6,10 +6,12 @@ Sampling script for trained checkpoints.
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 
 import torch
 from diffusers import AutoencoderKL
+from torchvision.utils import save_image
 
 from diffusion_image import torch_compat  # noqa: F401
 from diffusion_image.config import load_config
@@ -74,6 +76,28 @@ def sample_latents(
     raise ValueError(f"Unsupported sampler: {cfg.diffusion.sampler}")
 
 
+def save_individual_samples(samples: torch.Tensor, prompts: list[str], outdir: Path, start_index: int) -> None:
+    image_dir = outdir / "images"
+    image_dir.mkdir(parents=True, exist_ok=True)
+    metadata_path = outdir / "metadata.jsonl"
+    with metadata_path.open("a") as handle:
+        for offset, (sample, prompt) in enumerate(zip(samples.cpu(), prompts)):
+            image_index = start_index + offset
+            image_path = image_dir / f"sample_{image_index:06d}.png"
+            normalized = ((sample.clamp(-1, 1) + 1) / 2).clamp(0, 1)
+            save_image(normalized, image_path)
+            handle.write(
+                json.dumps(
+                    {
+                        "index": image_index,
+                        "prompt": prompt,
+                        "image": str(image_path.relative_to(outdir)),
+                    }
+                )
+                + "\n"
+            )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Sample from diffusion model")
     parser.add_argument("--config", type=Path, required=True)
@@ -89,7 +113,11 @@ def main() -> None:
     cfg = load_config(args.config)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     tokenizer = SentencePieceTokenizer(cfg.dataset.tokenizer_path, cfg.model.text_context_tokens)
-    model = build_model(cfg.model, latent_mode=cfg.dataset.latent_mode).to(device)
+    model = build_model(
+        cfg.model,
+        latent_mode=cfg.dataset.latent_mode,
+        vocab_size=tokenizer.vocab_size,
+    ).to(device)
     diffusion = DiffusionProcess(cfg.diffusion).to(device)
     vae = None
     if cfg.dataset.latent_mode and cfg.model.vae_model:
@@ -101,6 +129,11 @@ def main() -> None:
 
     prompts = load_prompts(args.prompts, args.prompt)
     args.outdir.mkdir(parents=True, exist_ok=True)
+    metadata_path = args.outdir / "metadata.jsonl"
+    if metadata_path.exists():
+        metadata_path.unlink()
+    grid_dir = args.outdir / "grids"
+    grid_dir.mkdir(parents=True, exist_ok=True)
 
     for idx in range(0, len(prompts), args.batch_size):
         chunk = prompts[idx : idx + args.batch_size]
@@ -129,7 +162,12 @@ def main() -> None:
             )
             if cfg.dataset.latent_mode and vae is not None:
                 samples = vae.decode(samples / vae.config.scaling_factor).sample
-        save_image_grid(samples.cpu(), args.outdir / f"batch_{idx//args.batch_size:04d}.png", nrow=min(4, samples.size(0)))
+        save_individual_samples(samples, chunk, args.outdir, start_index=idx)
+        save_image_grid(
+            samples.cpu(),
+            grid_dir / f"batch_{idx//args.batch_size:04d}.png",
+            nrow=min(4, samples.size(0)),
+        )
 
 
 if __name__ == "__main__":
