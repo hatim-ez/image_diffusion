@@ -93,6 +93,12 @@ Sampling writes:
   python metrics/compute_fid.py --real data/fid_ref --fake samples
   ```
 
+## Testing
+Run the smoke suite with:
+```bash
+python3 -m unittest discover -s tests
+```
+
 ## Validation
 Quick local checks:
 ```bash
