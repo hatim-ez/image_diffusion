@@ -142,7 +142,11 @@ def train(config_path: Path) -> None:
     device = ctx.device
     tokenizer = SentencePieceTokenizer(cfg.dataset.tokenizer_path, max_length=cfg.model.text_context_tokens)
     dataloader = create_webdataset_dataloader(cfg.dataset, tokenizer, distributed=ctx.distributed)
-    model = build_model(cfg.model, latent_mode=cfg.dataset.latent_mode).to(device)
+    model = build_model(
+        cfg.model,
+        latent_mode=cfg.dataset.latent_mode,
+        vocab_size=tokenizer.vocab_size,
+    ).to(device)
     train_model = model
     if ctx.distributed:
         ddp_kwargs = {"device_ids": [ctx.local_rank]} if device.type == "cuda" else {}
